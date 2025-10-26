@@ -1,9 +1,10 @@
-import csv from 'csv-parser';
-import stream from 'stream';
-import Registration from '../models/Registration.js';
-import Student from '../models/Student.js';
-import Instructor from '../models/Instructor.js';
-import ClassType from '../models/ClassType.js';
+import csv from "csv-parser";
+import stream from "stream";
+import Registration from "../models/Registration.js";
+import Student from "../models/Student.js";
+import Instructor from "../models/Instructor.js";
+import ClassType from "../models/ClassType.js";
+import { validateBusinessRules } from "./validationService.js";
 
 export const processCSVData = (fileBuffer) => {
   return new Promise((resolve, reject) => {
@@ -13,65 +14,64 @@ export const processCSVData = (fileBuffer) => {
 
     bufferStream
       .pipe(csv())
-      .on('data', (data) => results.push(data))
-      .on('end', () => resolve(results))
-      .on('error', reject);
+      .on("data", (data) => results.push(data))
+      .on("end", () => resolve(results))
+      .on("error", reject);
   });
 };
 
 export const processRegistrationRow = async (row, lineNumber) => {
   try {
-    const { 
-      'Registration ID': registrationId, 
-      'Student ID': studentId, 
-      'Instructor ID': instructorId, 
-      'Class ID': classId, 
-      'Class Start Time': classStartTime, 
-      'Action': action 
+    const {
+      "Registration ID": registrationId,
+      "Student ID": studentId,
+      "Instructor ID": instructorId,
+      "Class ID": classId,
+      "Class Start Time": classStartTime,
+      Action: action,
     } = row;
 
     console.log(`📝 Processing line ${lineNumber}: ${action} action`);
 
     if (!action) {
-      throw new Error('Action is required');
+      throw new Error("Action is required");
     }
 
     switch (action.toLowerCase()) {
-      case 'new':
+      case "new":
         return await createNewRegistration(row, lineNumber);
-      case 'update':
+      case "update":
         return await updateRegistration(row, lineNumber);
-      case 'delete':
+      case "delete":
         return await deleteRegistration(row, lineNumber);
       default:
         throw new Error(`Invalid action: ${action}`);
     }
-
   } catch (error) {
     return {
       line: lineNumber,
       success: false,
       error: error.message,
-      data: row
+      data: row,
     };
   }
 };
 
 const createNewRegistration = async (row, lineNumber) => {
-  const { 
-    'Student ID': studentId, 
-    'Instructor ID': instructorId, 
-    'Class ID': classId, 
-    'Class Start Time': classStartTime 
+  const {
+    "Student ID": studentId,
+    "Instructor ID": instructorId,
+    "Class ID": classId,
+    "Class Start Time": classStartTime,
   } = row;
 
   if (!studentId || !instructorId || !classId || !classStartTime) {
-    throw new Error('All fields are required for new registration');
+    throw new Error("All fields are required for new registration");
   }
 
   const startTime = parseDate(classStartTime);
   if (!startTime) {
-    throw new Error('Invalid date format. Use MM/DD/YYYY HH:mm');
+    throw new Error("Invalid date format. Use MM/DD/YYYY HH:mm");
   }
 
   const instructor = await Instructor.findOne({ instructorId });
@@ -89,11 +89,22 @@ const createNewRegistration = async (row, lineNumber) => {
     student = await Student.create({
       studentId,
       name: `Student ${studentId}`,
-      email: `student${studentId}@example.com`
+      email: `student${studentId}@example.com`,
     });
   }
 
-  const newRegistrationId = `REG${Date.now()}${Math.random().toString(36).substr(2, 5)}`.toUpperCase();
+  const newRegistrationId = `REG${Date.now()}${Math.random()
+    .toString(36)
+    .substr(2, 5)}`.toUpperCase();
+
+  // Validate business rules before creating registration
+  await validateBusinessRules({
+    studentId,
+    instructorId,
+    classType: classId,
+    startTime,
+    action: "new",
+  });
 
   await Registration.create({
     registrationId: newRegistrationId,
@@ -101,30 +112,30 @@ const createNewRegistration = async (row, lineNumber) => {
     instructorId,
     classType: classId,
     startTime,
-    action: 'new',
-    status: 'scheduled'
+    action: "new",
+    status: "scheduled",
   });
 
   return {
     line: lineNumber,
     success: true,
-    message: 'Registration created successfully',
+    message: "Registration created successfully",
     registrationId: newRegistrationId,
-    data: row
+    data: row,
   };
 };
 
 const updateRegistration = async (row, lineNumber) => {
-  const { 
-    'Registration ID': registrationId,
-    'Student ID': studentId, 
-    'Instructor ID': instructorId, 
-    'Class ID': classId, 
-    'Class Start Time': classStartTime 
+  const {
+    "Registration ID": registrationId,
+    "Student ID": studentId,
+    "Instructor ID": instructorId,
+    "Class ID": classId,
+    "Class Start Time": classStartTime,
   } = row;
 
-  if (!registrationId || registrationId === 'null') {
-    throw new Error('Registration ID is required for update');
+  if (!registrationId || registrationId === "null") {
+    throw new Error("Registration ID is required for update");
   }
 
   const existing = await Registration.findOne({ registrationId });
@@ -133,39 +144,41 @@ const updateRegistration = async (row, lineNumber) => {
   }
 
   let startTime = existing.startTime;
-  if (classStartTime && classStartTime !== 'null') {
+  if (classStartTime && classStartTime !== "null") {
     startTime = parseDate(classStartTime);
     if (!startTime) {
-      throw new Error('Invalid date format. Use MM/DD/YYYY HH:mm');
+      throw new Error("Invalid date format. Use MM/DD/YYYY HH:mm");
     }
   }
 
   await Registration.updateOne(
     { registrationId },
     {
-      studentId: studentId && studentId !== 'null' ? studentId : existing.studentId,
-      instructorId: instructorId && instructorId !== 'null' ? instructorId : existing.instructorId,
-      classType: classId && classId !== 'null' ? classId : existing.classType,
-      startTime
+      studentId:
+        studentId && studentId !== "null" ? studentId : existing.studentId,
+      instructorId:
+        instructorId && instructorId !== "null"
+          ? instructorId
+          : existing.instructorId,
+      classType: classId && classId !== "null" ? classId : existing.classType,
+      startTime,
     }
   );
 
   return {
     line: lineNumber,
     success: true,
-    message: 'Registration updated successfully',
+    message: "Registration updated successfully",
     registrationId,
-    data: row
+    data: row,
   };
 };
 
 const deleteRegistration = async (row, lineNumber) => {
-  const { 
-    'Registration ID': registrationId 
-  } = row;
+  const { "Registration ID": registrationId } = row;
 
-  if (!registrationId || registrationId === 'null') {
-    throw new Error('Registration ID is required for delete');
+  if (!registrationId || registrationId === "null") {
+    throw new Error("Registration ID is required for delete");
   }
 
   const result = await Registration.deleteOne({ registrationId });
@@ -176,20 +189,20 @@ const deleteRegistration = async (row, lineNumber) => {
   return {
     line: lineNumber,
     success: true,
-    message: 'Registration deleted successfully',
+    message: "Registration deleted successfully",
     registrationId,
-    data: row
+    data: row,
   };
 };
 
 const parseDate = (dateString) => {
-  if (!dateString || dateString === 'null') return null;
-  
+  if (!dateString || dateString === "null") return null;
+
   try {
-    const [datePart, timePart] = dateString.split(' ');
-    const [month, day, year] = datePart.split('/');
-    const [hours, minutes] = timePart.split(':');
-    
+    const [datePart, timePart] = dateString.split(" ");
+    const [month, day, year] = datePart.split("/");
+    const [hours, minutes] = timePart.split(":");
+
     return new Date(year, month - 1, day, hours, minutes);
   } catch (error) {
     return null;
